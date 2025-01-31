@@ -34,7 +34,9 @@ local unpack = unpack or table.unpack
 -- Component API functions
 _COMPONENT_FUNCTIONS = {
     'awake', 'reset', 'start', 'postStart', 'preUpdate', 'update', 'onBlocked',
-    'onEnter', 'onExit', 'onHit', 'onStateChange'}
+    'onEnter', 'onExit', 'onHit', 'onStateChange', 'registerUpdaters',
+    'addHits', 'addSprites', 'addCustomSprites', 'addObservations',
+    'addPlayerCallbacks'}
 
 
 local GameObject = class.Class()
@@ -111,6 +113,10 @@ function GameObject:_registerComponentFunctions(component)
       _safe_add_to_table(self._components_by_function, func, component)
     end
   end
+end
+
+function GameObject:hasComponentWithFunction(functionName)
+  return self._components_by_function[functionName] ~= nil
 end
 
 --[[ Adds a component to this GameObject.  A Component must be added to at most
@@ -411,9 +417,11 @@ end
 
 function GameObject:start(grid, optionalLocator)
   self._grid = grid
+  -- Make sure that the Transform is initialised first.
+  self:getComponent('Transform'):start(optionalLocator)
   self:_doOnAllComponents(
     function(component)
-      if component.start then
+      if component.start and component.name ~= 'Transform' then
         component:start(optionalLocator)
       end
     end)

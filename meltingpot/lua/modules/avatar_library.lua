@@ -43,7 +43,12 @@ function Avatar:__init__(kwargs)
       {'name', args.default('Avatar')},
       -- `index` (int): player index for the game object bearing this component.
       {'index', args.numberType},
+      -- `spawnGroup` (str): group of objects where this avatar may spawn.
       {'spawnGroup', args.stringType},
+      -- `postInitialSpawnGroup` (str): group of objects where this avatar may
+      --   spawn after its initial spawn (optional, if not provided then it will
+      --   default to taking the same value as `spawnGroup`.
+      {'postInitialSpawnGroup', args.default('_DEFAULT'), args.stringType},
       -- `aliveState` (str): the state of this object when it is live, i.e.,
       --     when agents and humans can control it.
       {'aliveState', args.stringType},
@@ -87,6 +92,10 @@ function Avatar:__init__(kwargs)
       -- `skipWaitStateRewards` (bool) default True. When true, do not reward
       -- avatars when they are in wait state.
       {'skipWaitStateRewards', args.default(true), args.booleanType},
+      -- `randomizeInitialOrientation` (bool) default True. Avatar orientations
+      -- are assigned randomly at the start of each episode. If you instead
+      -- set this to false then initial Avatar orientation is always North.
+      {'randomizeInitialOrientation', args.default(true), args.booleanType},
   })
   Avatar.Base.__init__(self, kwargs)
   self._config.kwargs = kwargs
@@ -96,7 +105,7 @@ function Avatar:__init__(kwargs)
   self._config.view = kwargs.view
 
   self._config._index = kwargs.index
-  self._config.spawnGroup = kwargs.spawnGroup
+  self._config.initialSpawnGroup = kwargs.spawnGroup
   self._config.spriteMap = kwargs.spriteMap
 
   self._config.aliveState = kwargs.aliveState
@@ -107,6 +116,12 @@ function Avatar:__init__(kwargs)
   self._config.liveStatesSet = set.Set(self._config.liveStates)
 
   self._config.skipWaitStateRewards = kwargs.skipWaitStateRewards
+  self._config.randomizeInitialOrientation = kwargs.randomizeInitialOrientation
+
+  if kwargs.postInitialSpawnGroup ~= '_DEFAULT' then
+    self._config.postInitialSpawnGroup = kwargs.postInitialSpawnGroup
+  end
+  self._spawnGroup = self._config.initialSpawnGroup
 end
 
 -- Call initializeVolatileVariables during `awake` and `reset`.
@@ -282,7 +297,11 @@ function Avatar:start(locator)
       actions = actions
   }
   local targetTransform = self.gameObject._grid:transform(locator)
-  targetTransform.orientation = random:choice(_COMPASS)
+  if self._config.randomizeInitialOrientation then
+    targetTransform.orientation = random:choice(_COMPASS)
+  else
+    targetTransform.orientation = 'N'
+  end
 
   local uniqueState = self.gameObject:getUniqueState(
     self.gameObject:getState())
@@ -298,6 +317,14 @@ function Avatar:start(locator)
   events:add('AvatarStarted', 'str', 'success')
 
   return piece
+end
+
+function Avatar:postStart()
+  if self._config.postInitialSpawnGroup then
+    -- The first spawn was at the externally provided `spawnGroup`. Subsequent
+    -- spawns will be at the provided `postInitialSpawnGroup` if applicable.
+    self._spawnGroup = self._config.postInitialSpawnGroup
+  end
 end
 
 function Avatar:preUpdate()
@@ -331,7 +358,7 @@ function Avatar:getIndex()
 end
 
 function Avatar:getSpawnGroup()
-  return self._config.spawnGroup
+  return self._spawnGroup
 end
 
 function Avatar:addReward(amount)
@@ -446,8 +473,15 @@ end
 
 --[[ Prevent movement for `numFrames` steps, then allow it again.]]
 function Avatar:disallowMovementUntil(numFrames)
-  self:disallowMovement()
-  self._freezeCounter = numFrames
+  if numFrames > 0 then
+    self:disallowMovement()
+    self._freezeCounter = numFrames
+  end
+end
+
+--[[ Return true if movement is allowed and false otherwise.]]
+function Avatar:isMovementAllowed()
+  return self._movementAllowed
 end
 
 --[[ Remove the avatar (set it to wait state) after `delay` elapsed timesteps.]]
@@ -541,6 +575,8 @@ function Zapper:__init__(kwargs)
       {'cooldownTime', args.numberType},
       {'beamLength', args.numberType},
       {'beamRadius', args.numberType},
+      -- The default beam color is yellow.
+      {'beamColor', args.default({252, 252, 106}), args.tableType},
       {'framesTillRespawn', args.numberType},
       {'penaltyForBeingZapped', args.numberType},
       {'rewardForZapping', args.numberType},
@@ -551,6 +587,7 @@ function Zapper:__init__(kwargs)
   self._config.cooldownTime = kwargs.cooldownTime
   self._config.beamLength = kwargs.beamLength
   self._config.beamRadius = kwargs.beamRadius
+  self._config.beamColor = kwargs.beamColor
   self._config.framesTillRespawn = kwargs.framesTillRespawn
   self._config.penaltyForBeingZapped = kwargs.penaltyForBeingZapped
   self._config.rewardForZapping = kwargs.rewardForZapping
@@ -562,12 +599,11 @@ function Zapper:addHits(worldConfig)
       layer = 'beamZap',
       sprite = 'BeamZap',
   }
-  table.insert(worldConfig.renderOrder, 'beamZap')
+  component.insertIfNotPresent(worldConfig.renderOrder, 'beamZap')
 end
 
 function Zapper:addSprites(tileSet)
-  -- This color is yellow.
-  tileSet:addColor('BeamZap', {252, 252, 106})
+  tileSet:addColor('BeamZap', self._config.beamColor)
 end
 
 function Zapper:registerUpdaters(updaterRegistry)
@@ -633,6 +669,12 @@ function Zapper:onHit(hittingGameObject, hitName)
     -- Temporarily store the index of the zapper avatar in state so it can
     -- be observed elsewhere.
     self.zapperIndex = zapperIndex
+    -- Temporarily record that the zapper hit another player on this frame.
+    if hittingGameObject:hasComponent('Zapper') then
+      local hittingZapper = hittingGameObject:getComponent('Zapper')
+      hittingZapper.num_others_player_zapped_this_step = (
+          hittingZapper.num_others_player_zapped_this_step + 1)
+    end
     -- return `true` to prevent the beam from passing through a hit player.
     return true
   end
@@ -646,6 +688,7 @@ function Zapper:reset()
   self.playerRespawnedThisStep = false
   self._disallowZapping = false
   self._noZappingCounter = 0
+  self.num_others_player_zapped_this_step = 0
 end
 
 function Zapper:start()
@@ -671,6 +714,7 @@ function Zapper:update()
   -- Metrics must be read from preUpdate since they will get reset in update.
   self.playerRespawnedThisStep = false
   self.zapperIndex = nil
+  self.num_others_player_zapped_this_step = 0
   -- Note: After zapping is allowed again after having been disallowed, players
   -- still need to wait another `cooldownTime` frames before they can zap again.
   if self._disallowZapping then
@@ -878,8 +922,6 @@ end
 
 function AvatarConnector:avatarStateChange(behavior)
   local avatarComponent = self._avatarObject:getComponent('Avatar')
-  local avatarAliveState = avatarComponent:getAliveState()
-  local avatarWaitState = avatarComponent:getWaitState()
   -- If the avatar's state has changed, then also update the state of
   -- the avatar connector.
   if behavior == 'respawn' then
