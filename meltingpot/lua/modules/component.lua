@@ -34,8 +34,8 @@ Components have the following methods:
     finished.
 *   preUpdate(): Called every frame, always before update().
 *   update(): Called every frame.
-*   onBlocked(blockedGameObject): Called when another object attempts and fails
-    to enter the same (x, y, layer) absolute location as the containing object.
+*   onBlocked(blockingGameObject): Called when this object attempts and fails
+    to enter an occupied (x, y, layer) absolute location.
 *   onEnter(enteringGameObject, contactName): Called when another object enters
     the same (x, y) location (but in another layer) as the containing object.
 *   onExit(exitingGameObject, contactName): Called when another object occupying
@@ -75,4 +75,16 @@ function Component:__init__(kwargs)
 end
 
 
-return {Component = Component}
+--Utility to insert a value in a table if not already present.
+function insertIfNotPresent(tbl, element)
+  for _, value in pairs(tbl) do
+    if value == element then
+      return
+    end
+  end
+  table.insert(tbl, element)
+end
+
+
+return {Component = Component,
+        insertIfNotPresent = insertIfNotPresent}
